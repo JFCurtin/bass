@@ -7,23 +7,23 @@ import threading
 import time
 import math
 
-STRINGS = {
-    5: "B0",
-    4: "E1",
-    3: "A1",
-    2: "D2",
-    1: "G2"
-}
+# 5-string bass standard tuning: low to high
+# B E A D G
 
-NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-
-OPEN_MIDI = {
-    5: 23,  # B0
-    4: 28,  # E1
-    3: 33,  # A1
-    2: 38,  # D2
-    1: 43   # G2
-}
+NOTE_NAMES = [
+    "C",
+    "C#/Db",
+    "D",
+    "D#/Eb",
+    "E",
+    "F",
+    "F#/Gb",
+    "G",
+    "G#/Ab",
+    "A",
+    "A#/Bb",
+    "B"
+]
 
 SAMPLE_RATE = 44100
 BLOCK_SIZE = 4096
@@ -39,6 +39,17 @@ def note_name_only(note):
     return ''.join([c for c in note if not c.isdigit() and c != "-"])
 
 
+def notes_match(detected_note, target_note):
+    detected_variants = detected_note.split("/")
+    target_variants = target_note.split("/")
+
+    return any(
+        d.upper() == t.upper()
+        for d in detected_variants
+        for t in target_variants
+    )
+
+
 def freq_to_midi(freq):
     return round(69 + 12 * math.log2(freq / 440.0))
 
@@ -51,7 +62,7 @@ def detect_pitch(audio):
         return None
 
     corr = np.correlate(audio, audio, mode="full")
-    corr = corr[len(corr)//2:]
+    corr = corr[len(corr) // 2:]
 
     min_freq = 25
     max_freq = 500
@@ -177,7 +188,7 @@ class BassNoteTrainer:
                         {"text": f"Detected: {detected_note} ({freq:.1f} Hz)"}
                     )
 
-                    if detected_name == self.target_note:
+                    if notes_match(detected_name, self.target_note):
                         self.score += 1
                         self.total += 1
 
