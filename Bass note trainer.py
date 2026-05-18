@@ -12,8 +12,24 @@ NOTE_NAMES = [
     "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B"
 ]
 
+STRING_CONFIGS = {
+    "4 String (E A D G)": {
+        "lowest_midi": 28,  # E1
+        "highest_midi": 67  # G4
+    },
+    "5 String (B E A D G)": {
+        "lowest_midi": 23,  # B0
+        "highest_midi": 67  # G4
+    },
+    "6 String (B E A D G C)": {
+        "lowest_midi": 23,  # B0
+        "highest_midi": 72  # C5
+    }
+}
+
 SAMPLE_RATE = 44100
 BLOCK_SIZE = 4096
+TUNER_RANGE_CENTS = 50
 
 
 def midi_to_note(midi):
@@ -78,13 +94,18 @@ def detect_pitch(audio):
 class BassNoteTrainer:
     def __init__(self, root):
         self.root = root
-        self.root.title("5-String Bass Note Trainer")
+        self.root.title("Bass Note Trainer")
 
+        self.string_config = tk.StringVar(value="5 String (B E A D G)")
         self.target_note = None
+
         self.listening = False
         self.tuner_mode = False
-        self.score = 0
+
+        self.correct = 0
+        self.incorrect = 0
         self.total = 0
+        self.answer_locked = False
 
         self.build_gui()
         self.new_question()
@@ -95,82 +116,207 @@ class BassNoteTrainer:
 
         ttk.Label(
             main,
-            text="5-String Bass Note Trainer",
+            text="Bass Note Trainer",
             font=("Segoe UI", 18, "bold")
-        ).grid(row=0, column=0, columnspan=3, pady=10)
+        ).grid(row=0, column=0, columnspan=4, pady=10)
 
         ttk.Label(
             main,
             text="Play the prompted note anywhere on the bass"
-        ).grid(row=1, column=0, columnspan=3)
+        ).grid(row=1, column=0, columnspan=4)
+
+        ttk.Label(
+            main,
+            text="Bass Type:"
+        ).grid(row=2, column=0, pady=5, sticky="e")
+
+        self.string_selector = ttk.Combobox(
+            main,
+            textvariable=self.string_config,
+            values=list(STRING_CONFIGS.keys()),
+            state="readonly",
+            width=24
+        )
+        self.string_selector.grid(row=2, column=1, columnspan=3, pady=5, sticky="w")
+        self.string_selector.bind("<<ComboboxSelected>>", self.on_string_config_changed)
 
         self.question_label = ttk.Label(
             main,
             text="",
             font=("Segoe UI", 24, "bold")
         )
-        self.question_label.grid(row=2, column=0, columnspan=3, pady=25)
+        self.question_label.grid(row=3, column=0, columnspan=4, pady=20)
 
         self.detected_label = ttk.Label(
             main,
             text="Detected: --",
             font=("Segoe UI", 14)
         )
-        self.detected_label.grid(row=3, column=0, columnspan=3, pady=5)
+        self.detected_label.grid(row=4, column=0, columnspan=4, pady=5)
 
         self.tuner_label = ttk.Label(
             main,
             text="Tuner: --",
             font=("Segoe UI", 14)
         )
-        self.tuner_label.grid(row=4, column=0, columnspan=3, pady=5)
+        self.tuner_label.grid(row=5, column=0, columnspan=4, pady=5)
+
+        self.tuner_canvas = tk.Canvas(
+            main,
+            width=360,
+            height=90,
+            bg="white",
+            highlightthickness=1,
+            highlightbackground="#cccccc"
+        )
+        self.tuner_canvas.grid(row=6, column=0, columnspan=4, pady=10)
+        self.draw_tuner(0)
 
         self.result_label = ttk.Label(
             main,
             text="",
             font=("Segoe UI", 14)
         )
-        self.result_label.grid(row=5, column=0, columnspan=3, pady=10)
+        self.result_label.grid(row=7, column=0, columnspan=4, pady=10)
 
         ttk.Button(
             main,
             text="New Note",
             command=self.new_question
-        ).grid(row=6, column=0, pady=10, padx=5)
+        ).grid(row=8, column=0, pady=10, padx=5)
 
         self.listen_button = ttk.Button(
             main,
             text="Start Listening",
             command=self.toggle_listening
         )
-        self.listen_button.grid(row=6, column=1, pady=10, padx=5)
+        self.listen_button.grid(row=8, column=1, pady=10, padx=5)
 
         self.tuner_button = ttk.Button(
             main,
             text="Tuner Mode",
             command=self.toggle_tuner_mode
         )
-        self.tuner_button.grid(row=6, column=2, pady=10, padx=5)
+        self.tuner_button.grid(row=8, column=2, pady=10, padx=5)
+
+        ttk.Button(
+            main,
+            text="Reset Score",
+            command=self.reset_score
+        ).grid(row=8, column=3, pady=10, padx=5)
 
         self.score_label = ttk.Label(
             main,
-            text="Score: 0/0"
+            text="Correct: 0 | Incorrect: 0 | Total: 0"
         )
-        self.score_label.grid(row=7, column=0, columnspan=3, pady=10)
+        self.score_label.grid(row=9, column=0, columnspan=4, pady=10)
+
+    def on_string_config_changed(self, event=None):
+        self.new_question()
+
+    def draw_tuner(self, cents):
+        self.tuner_canvas.delete("all")
+
+        width = 360
+        height = 90
+        center_x = width // 2
+        center_y = 65
+
+        self.tuner_canvas.create_text(
+            center_x,
+            10,
+            text="Flat        In Tune        Sharp",
+            font=("Segoe UI", 9)
+        )
+
+        self.tuner_canvas.create_line(
+            30,
+            center_y,
+            width - 30,
+            center_y,
+            width=2
+        )
+
+        self.tuner_canvas.create_line(
+            center_x,
+            20,
+            center_x,
+            center_y + 10,
+            width=2
+        )
+
+        for offset in [-50, -25, 0, 25, 50]:
+            x = center_x + int((offset / TUNER_RANGE_CENTS) * 150)
+            tick_height = 20 if offset == 0 else 12
+
+            self.tuner_canvas.create_line(
+                x,
+                center_y - tick_height,
+                x,
+                center_y + tick_height,
+                width=2 if offset == 0 else 1
+            )
+
+            self.tuner_canvas.create_text(
+                x,
+                center_y + 25,
+                text=str(offset),
+                font=("Segoe UI", 8)
+            )
+
+        clipped_cents = max(-TUNER_RANGE_CENTS, min(TUNER_RANGE_CENTS, cents))
+        needle_x = center_x + int((clipped_cents / TUNER_RANGE_CENTS) * 150)
+
+        self.tuner_canvas.create_line(
+            center_x,
+            15,
+            needle_x,
+            center_y,
+            width=3
+        )
+
+        self.tuner_canvas.create_oval(
+            center_x - 5,
+            10,
+            center_x + 5,
+            20,
+            fill="black"
+        )
 
     def new_question(self):
         self.tuner_mode = False
+        self.answer_locked = False
         self.tuner_button.config(text="Tuner Mode")
 
-        self.target_note = random.choice(NOTE_NAMES)
+        config = STRING_CONFIGS[self.string_config.get()]
 
-        self.question_label.config(
-            text=f"Play: {self.target_note}"
+        target_midi = random.randint(
+            config["lowest_midi"],
+            config["highest_midi"]
         )
 
+        self.target_note = note_name_only(
+            midi_to_note(target_midi)
+        )
+
+        self.question_label.config(text=f"Play: {self.target_note}")
         self.result_label.config(text="")
         self.detected_label.config(text="Detected: --")
         self.tuner_label.config(text="Tuner: --")
+        self.draw_tuner(0)
+
+    def reset_score(self):
+        self.correct = 0
+        self.incorrect = 0
+        self.total = 0
+        self.answer_locked = False
+        self.update_score_label()
+        self.result_label.config(text="Score reset")
+
+    def update_score_label(self):
+        self.score_label.config(
+            text=f"Correct: {self.correct} | Incorrect: {self.incorrect} | Total: {self.total}"
+        )
 
     def toggle_tuner_mode(self):
         self.tuner_mode = not self.tuner_mode
@@ -179,6 +325,7 @@ class BassNoteTrainer:
             self.question_label.config(text="Tuner Mode")
             self.result_label.config(text="Play a single open string or fretted note")
             self.tuner_button.config(text="Exit Tuner")
+            self.answer_locked = True
         else:
             self.tuner_button.config(text="Tuner Mode")
             self.new_question()
@@ -231,27 +378,41 @@ class BassNoteTrainer:
                         {"text": f"Tuner: {detected_note} — {tuning_status}"}
                     )
 
+                    self.root.after(0, self.draw_tuner, cents)
+
                     if self.tuner_mode:
                         time.sleep(0.05)
                         continue
 
-                    if notes_match(detected_name, self.target_note):
-                        self.score += 1
+                    if not self.answer_locked:
+                        self.answer_locked = True
                         self.total += 1
 
-                        self.root.after(
-                            0,
-                            self.result_label.config,
-                            {"text": f"Correct: {self.target_note}"}
-                        )
+                        if notes_match(detected_name, self.target_note):
+                            self.correct += 1
 
-                        self.root.after(
-                            0,
-                            self.score_label.config,
-                            {"text": f"Score: {self.score}/{self.total}"}
-                        )
+                            self.root.after(
+                                0,
+                                self.result_label.config,
+                                {"text": f"Correct: {self.target_note}"}
+                            )
+                        else:
+                            self.incorrect += 1
 
-                        time.sleep(1)
+                            self.root.after(
+                                0,
+                                self.result_label.config,
+                                {
+                                    "text": (
+                                        f"Incorrect. Played {detected_name}, "
+                                        f"target was {self.target_note}"
+                                    )
+                                }
+                            )
+
+                        self.root.after(0, self.update_score_label)
+
+                        time.sleep(1.2)
                         self.root.after(0, self.new_question)
 
                 time.sleep(0.05)
